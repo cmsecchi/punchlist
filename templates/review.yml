@@ -1,0 +1,62 @@
+# The reviewer. Copied verbatim from punchlist/templates/review.yml; change it there.
+# Called by build.yml. A fresh session that can read the code and comment on the PR, nothing else.
+# To review every PR instead (later), add a pull_request trigger here.
+name: review
+
+on:
+  workflow_call:
+    inputs:
+      pr:
+        description: Pull request number to review
+        required: true
+        type: string
+      issue:
+        description: The ticket the pull request closes
+        required: true
+        type: string
+    outputs:
+      verdict:
+        description: approved or changes
+        value: ${{ jobs.review.outputs.verdict }}
+
+env:
+  REVIEW_MODEL: claude-sonnet-5-5
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      verdict: ${{ fromJSON(steps.claude.outputs.structured_output || '{}').verdict }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ inputs.pr }}/head
+          fetch-depth: 0
+
+      - id: claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The job's own read-only token, not the Claude app's: the reviewer cannot push.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          plugin_marketplaces: https://github.com/cmsecchi/punchlist.git
+          plugins: punchlist@cmsecchi
+          prompt: |
+            Review pull request #${{ inputs.pr }} in ${{ github.repository }} against its ticket,
+            issue #${{ inputs.issue }}, using the review skill.
+            Read the ticket with `gh issue view ${{ inputs.issue }}` and the diff with
+            `git diff origin/main...HEAD`.
+            Post the whole review as one comment with `gh pr comment ${{ inputs.pr }} --body "..."`.
+            Then return the verdict.
+          claude_args: >-
+            --model ${{ env.REVIEW_MODEL }}
+            --max-turns 30
+            --allowedTools "Read,Glob,Grep,Bash(git diff:*),Bash(git log:*),Bash(gh issue view:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"
+            --disallowedTools "Edit,Write"
+            --json-schema '{"type":"object","properties":{"verdict":{"type":"string","enum":["approved","changes"]}},"required":["verdict"]}'
