@@ -36,6 +36,9 @@ jobs:
         with:
           # The PR's code runs below; it must not find a token in the git config.
           persist-credentials: false
+          # Full history, so origin/main is already here: without credentials the job cannot
+          # fetch from a private repo, and a project may diff the PR against main.
+          fetch-depth: 0
 
       - name: Check the project has a screenshots target
         id: target
