@@ -36,6 +36,7 @@ Then set up each project repo as described in "What a project needs".
 | `templates/build.yml` | Writer, then up to two review and fix rounds, triggered by the `go` label | Copied to `.github/workflows/` |
 | `templates/review.yml` | The reviewer, read-only, called by `build.yml` | Copied to `.github/workflows/` |
 | `templates/secrets.yml` | Secret scan (gitleaks) on every PR and push to `main` | Copied to `.github/workflows/` |
+| `templates/screenshots.yml` | On PRs that change `frontend/`, runs `make screenshots` and posts up to three images in one PR comment; the PR's code never gets a write token or secrets | Copied to `.github/workflows/` (optional) |
 
 Copied files are never edited in the project: a change is made here, the version is bumped, and a
 sync PR replaces the copy in each project.
@@ -53,6 +54,8 @@ sync PR replaces the copy in each project.
 - A `main` ruleset: PR required, CI and the secret scan must pass, no force push, no bypass.
   Squash merge only.
 - Dependabot alerts on (Settings, Advanced Security): known vulnerabilities in dependencies.
+- Optional `make screenshots`: writes at most three PNG files to `screenshots/` (made-up data,
+  never production). Used by `screenshots.yml`.
 - Optional `docs/security.md`: extra security rules for this app (e.g. a database with personal
   data). The reviewer checks them on top of its baseline.
 

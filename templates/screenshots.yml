@@ -1,0 +1,139 @@
+# Screenshots of a PR's screens, posted in the PR. Copied verbatim from
+# punchlist/templates/screenshots.yml.
+# Trigger: a PR that changes files under frontend/. Runs only if the project's Makefile has a
+# `screenshots` target, which must write at most three PNG files to screenshots/.
+#
+# Safety, by design:
+# - `pull_request`, never `pull_request_target`: a PR from a fork gets no secrets and no write
+#   token.
+# - Two jobs. `capture` runs the PR's code with a read-only token and no secrets. `publish` never
+#   runs the PR's code: it only takes the images from `capture` and posts them.
+# - No repository secret is used anywhere, so production cannot be reached.
+name: screenshots
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+
+# A newer push to the same PR replaces the run in progress.
+concurrency:
+  group: screenshots-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      ran: ${{ steps.target.outputs.ran }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The PR's code runs below; it must not find a token in the git config.
+          persist-credentials: false
+
+      - name: Check the project has a screenshots target
+        id: target
+        run: |
+          if grep -qE '^screenshots:' Makefile 2>/dev/null; then
+            echo "ran=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ran=false" >> "$GITHUB_OUTPUT"
+            echo "No 'screenshots' target in the Makefile; nothing to do."
+          fi
+
+      - if: steps.target.outputs.ran == 'true'
+        run: make setup
+
+      - if: steps.target.outputs.ran == 'true'
+        run: make screenshots
+
+      # Keep at most three images with plain names, so nothing odd reaches the comment.
+      - name: Collect images
+        if: steps.target.outputs.ran == 'true'
+        run: |
+          mkdir -p shots
+          find screenshots -maxdepth 1 -type f -name '*.png' | sort | head -n 3 | while read -r f; do
+            name=$(basename "$f")
+            if [[ "$name" =~ ^[a-z0-9-]+\.png$ ]]; then cp "$f" "shots/$name"; fi
+          done
+          ls shots
+
+      - if: steps.target.outputs.ran == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: shots/
+          retention-days: 14
+
+  publish:
+    needs: capture
+    # Only for PRs from this repository: a fork's token cannot write, so its images stay as the
+    # downloadable artifact above.
+    if: >-
+      needs.capture.outputs.ran == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
+      SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: screenshots
+          path: shots
+
+      # Images live on a separate `screenshots` branch, so they render inline in the comment while
+      # the repo is private. Three tries in case two PRs push at the same moment.
+      - name: Store images on the screenshots branch
+        run: |
+          dir="pr-$PR/${SHA:0:7}"
+          for attempt in 1 2 3; do
+            rm -rf branch && mkdir branch && cd branch
+            git init -q
+            git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+            if git fetch -q --depth 1 origin screenshots; then git checkout -q FETCH_HEAD; fi
+            mkdir -p "$dir" && cp ../shots/*.png "$dir/"
+            git add "$dir"
+            git -c user.name="github-actions[bot]" \
+                -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                commit -q -m "Screenshots for PR $PR at ${SHA:0:7}"
+            if git push -q origin HEAD:refs/heads/screenshots; then exit 0; fi
+            cd .. && sleep $((attempt * 5))
+          done
+          echo "Could not push to the screenshots branch" && exit 1
+
+      # One comment per PR, found by a hidden marker and updated on every push.
+      - name: Post or update the PR comment
+        run: |
+          dir="pr-$PR/${SHA:0:7}"
+          {
+            echo "<!-- punchlist-screenshots -->"
+            echo "### Screenshots at ${SHA:0:7}"
+            echo
+            for f in shots/*.png; do
+              name=$(basename "$f")
+              echo "**${name%.png}**"
+              echo
+              echo "![${name%.png}](https://github.com/${REPO}/blob/screenshots/${dir}/${name}?raw=true)"
+              echo
+            done
+          } > comment.md
+          id=$(gh api "repos/$REPO/issues/$PR/comments" --paginate \
+                 -q '.[] | select(.body | startswith("<!-- punchlist-screenshots -->")) | .id' | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@comment.md > /dev/null
+          else
+            gh api "repos/$REPO/issues/$PR/comments" -F body=@comment.md > /dev/null
+          fi
