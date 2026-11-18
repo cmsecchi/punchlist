@@ -172,13 +172,19 @@ jobs:
       V1: ${{ needs.review1.outputs.verdict }}
       V2: ${{ needs.review2.outputs.verdict }}
       V3: ${{ needs.review3.outputs.verdict }}
+      OWNER: ${{ github.repository_owner }}
     steps:
+      # Whatever the outcome, the owner is assigned to what now waits for them (the ready PR, or
+      # the ticket with needs-you): GitHub then notifies them, and it shows under "Assigned to me".
       - run: |
+          assign() { gh api "repos/$GITHUB_REPOSITORY/issues/$1/assignees" -f "assignees[]=$OWNER" > /dev/null; }
           if [ -n "$PR" ] && { [ "$V1" = approved ] || [ "$V2" = approved ] || [ "$V3" = approved ]; }; then
             gh pr ready "$PR" --repo "$GITHUB_REPOSITORY"
+            assign "$PR"
             exit 0
           fi
           gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/labels" -f "labels[]=needs-you" > /dev/null
+          assign "$ISSUE"
           if [ -z "$PR" ]; then
             msg="The writer opened no pull request. See the run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           else
