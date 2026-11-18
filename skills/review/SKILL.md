@@ -75,7 +75,18 @@ three at most, one line each. Never open an issue for them.
 
 ## Output
 
+The first three sections are for the owner, who is not a developer: plain words, no jargon, no
+file names unless a file is a new part of the app. Base them on the diff, never on the PR body.
+
 ```
+## In plain words
+<2 or 3 sentences: what changes for the person using the app>
+## What to look at
+<1 to 3 concrete things the owner should check before merging: a screen, a behaviour; or
+"Nothing special.">
+## Risks
+<1 to 3 lines: what could go wrong for users or data if this is merged, and how hard it is to
+undo; or "Low: <why>.">
 ## Spec
 <findings, or "No findings.">
 ## Standards
@@ -87,4 +98,4 @@ three at most, one line each. Never open an issue for them.
 Verdict: approved | changes
 ```
 
-Keep the axes apart: do not merge or rerank them. Under 500 words in total.
+Keep the axes apart: do not merge or rerank them. Under 600 words in total.
