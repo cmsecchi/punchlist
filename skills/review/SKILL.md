@@ -75,8 +75,8 @@ three at most, one line each. Never open an issue for them.
 
 ## Output
 
-The first three sections are for the owner, who is not a developer: plain words, no jargon, no
-file names unless a file is a new part of the app. Base them on the diff, never on the PR body.
+The first three sections are a short summary in plain language: no jargon, no file names unless
+a file is a new part of the app. Base them on the diff, never on the PR body.
 
 ```
 ## In plain words
