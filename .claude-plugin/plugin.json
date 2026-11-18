@@ -1,6 +1,6 @@
 {
   "name": "punchlist",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A ticket-driven workflow for Claude Code: testable Done-when lines, test-first writing, an independent review, a person merges.",
   "license": "MIT"
 }
