@@ -160,7 +160,9 @@ jobs:
     needs: [write, review1, review2, review3]
     if: always() && needs.write.result != 'skipped'
     runs-on: ubuntu-latest
+    # contents: write is needed by `gh pr ready` (GitHub refuses it with pull-requests alone).
     permissions:
+      contents: write
       pull-requests: write
       issues: write
     env:
