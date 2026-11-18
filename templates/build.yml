@@ -1,0 +1,185 @@
+# Writer, reviewer and fixer for one ticket. Copied verbatim from punchlist/templates/build.yml.
+# Trigger: the `go` label on an issue. Chain: write -> review -> fix -> review -> fix -> review.
+# Two fix rounds at most; if the last review still asks for changes, the issue gets `needs-you`.
+name: build
+
+on:
+  issues:
+    types: [labeled]
+
+# One run per ticket: adding `go` twice does not start a second writer.
+concurrency:
+  group: build-${{ github.event.issue.number }}-${{ github.event.label.name }}
+  cancel-in-progress: false
+
+env:
+  DEV_MODEL: claude-sonnet-5-5
+
+permissions: {}
+
+jobs:
+  write:
+    if: github.event.label.name == 'go'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    outputs:
+      pr: ${{ steps.pr.outputs.number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: make setup
+      # No github_token: the action uses the Claude app's token, so the PR it opens starts ci.yml
+      # (events made with the workflow's own token start no other workflow).
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: https://github.com/cmsecchi/punchlist.git
+          plugins: punchlist@cmsecchi
+          prompt: |
+            You are the writer for issue #${{ github.event.issue.number }} in ${{ github.repository }}.
+            Read it with `gh issue view ${{ github.event.issue.number }}`.
+            Follow the developer rules in AGENTS.md exactly, with the tdd skill.
+            The branch name must start with `${{ github.event.issue.number }}-`.
+            Push the branch and open the draft PR the rules describe.
+          claude_args: >-
+            --model ${{ env.DEV_MODEL }}
+            --max-turns 80
+            --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
+      - id: pr
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number,headRefName \
+            --jq '[.[] | select(.headRefName | startswith("${{ github.event.issue.number }}-"))][0].number // empty')
+          echo "number=$n" >> "$GITHUB_OUTPUT"
+
+  review1:
+    needs: write
+    if: needs.write.outputs.pr != ''
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+    uses: ./.github/workflows/review.yml
+    with:
+      pr: ${{ needs.write.outputs.pr }}
+      issue: ${{ github.event.issue.number }}
+    secrets: inherit
+
+  fix1:
+    needs: [write, review1]
+    if: needs.review1.outputs.verdict == 'changes'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ needs.write.outputs.pr }}/head
+          fetch-depth: 0
+      - run: make setup
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: https://github.com/cmsecchi/punchlist.git
+          plugins: punchlist@cmsecchi
+          prompt: &fix_prompt |
+            You are the fixer for pull request #${{ needs.write.outputs.pr }} (ticket #${{ github.event.issue.number }})
+            in ${{ github.repository }}. Read the reviewer's latest comment with
+            `gh pr view ${{ needs.write.outputs.pr }} --comments`.
+            Fix only the hard findings, following the developer rules in AGENTS.md (a test first for any
+            behaviour change). Ignore the Follow-ups. Run `make test` and `make lint` once.
+            Push to the PR's own branch; never open a new PR.
+            End with one PR comment listing what you changed, finding by finding.
+          claude_args: &fix_args >-
+            --model ${{ env.DEV_MODEL }}
+            --max-turns 50
+            --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
+
+  review2:
+    needs: [write, fix1]
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+    uses: ./.github/workflows/review.yml
+    with:
+      pr: ${{ needs.write.outputs.pr }}
+      issue: ${{ github.event.issue.number }}
+    secrets: inherit
+
+  fix2:
+    needs: [write, review2]
+    if: needs.review2.outputs.verdict == 'changes'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/pull/${{ needs.write.outputs.pr }}/head
+          fetch-depth: 0
+      - run: make setup
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          plugin_marketplaces: https://github.com/cmsecchi/punchlist.git
+          plugins: punchlist@cmsecchi
+          prompt: *fix_prompt
+          claude_args: *fix_args
+
+  review3:
+    needs: [write, fix2]
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+    uses: ./.github/workflows/review.yml
+    with:
+      pr: ${{ needs.write.outputs.pr }}
+      issue: ${{ github.event.issue.number }}
+    secrets: inherit
+
+  # A script, no model: approved -> PR ready for review; anything else -> `needs-you`.
+  finish:
+    needs: [write, review1, review2, review3]
+    if: always() && needs.write.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE: ${{ github.event.issue.number }}
+      PR: ${{ needs.write.outputs.pr }}
+      V1: ${{ needs.review1.outputs.verdict }}
+      V2: ${{ needs.review2.outputs.verdict }}
+      V3: ${{ needs.review3.outputs.verdict }}
+    steps:
+      - run: |
+          if [ -n "$PR" ] && { [ "$V1" = approved ] || [ "$V2" = approved ] || [ "$V3" = approved ]; }; then
+            gh pr ready "$PR" --repo "$GITHUB_REPOSITORY"
+            exit 0
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/labels" -f "labels[]=needs-you" > /dev/null
+          if [ -z "$PR" ]; then
+            msg="The writer opened no pull request. See the run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          else
+            msg="#$PR was not approved after two fix rounds (reviews: ${V1:-none}, ${V2:-none}, ${V3:-none})."
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE/comments" -f body="$msg" > /dev/null

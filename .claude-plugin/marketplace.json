@@ -1,0 +1,14 @@
+{
+  "name": "cmsecchi",
+  "owner": {
+    "name": "cmsecchi"
+  },
+  "plugins": [
+    {
+      "name": "punchlist",
+      "source": "./",
+      "description": "A ticket-driven workflow for Claude Code: testable Done-when lines, test-first writing, an independent review, a person merges.",
+      "version": "0.2.0"
+    }
+  ]
+}
