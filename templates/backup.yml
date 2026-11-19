@@ -6,8 +6,11 @@
 #   2. Encrypts the dump with a passphrase (gpg, AES-256).
 #   3. Proves the encrypted file is usable: decrypts it and restores it into a throwaway
 #      database that lives only inside this job.
-#   4. Keeps the encrypted file as a workflow artifact for 30 days.
+#   4. Keeps the encrypted file as a workflow artifact for 90 days.
 # A failed run means there is no fresh backup; GitHub emails a failed scheduled run.
+#
+# Run it from a repository that stays private, never from one that is or may become public:
+# anyone can download the artifacts and read the logs of a public repository.
 #
 # The project sets:
 #   secret   BACKUP_DATABASE_URL   postgresql://user:password@host:port/db, ideally a read-only role
@@ -115,5 +118,5 @@ jobs:
         with:
           name: backup-${{ env.STAMP }}
           path: backup-${{ env.STAMP }}.pgdump.gpg
-          retention-days: 30
+          retention-days: 90
           if-no-files-found: error

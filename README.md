@@ -37,7 +37,7 @@ Then set up each project repo as described in "What a project needs".
 | `templates/review.yml` | The reviewer, read-only, called by `build.yml` | Copied to `.github/workflows/` |
 | `templates/secrets.yml` | Secret scan (gitleaks) on every PR and push to `main` | Copied to `.github/workflows/` |
 | `templates/screenshots.yml` | On PRs that change `frontend/`, runs `make screenshots` and posts up to three images in one PR comment; the PR's code never gets a write token or secrets | Copied to `.github/workflows/` (optional) |
-| `templates/backup.yml` | Daily encrypted `pg_dump` of the production PostgreSQL, proved by restoring it into a throwaway database, kept 30 days as a workflow artifact | Copied to `.github/workflows/` (optional) |
+| `templates/backup.yml` | Daily encrypted `pg_dump` of the production PostgreSQL, proved by restoring it into a throwaway database, kept 90 days as a workflow artifact | Copied to `.github/workflows/` (optional) |
 | `templates/backup-restore.yml` | Manual recovery: decrypts a backup and restores it into an empty database; refuses one that has tables | Copied with `backup.yml` |
 
 Copied files are never edited in the project: a change is made here, the version is bumped, and a
@@ -58,7 +58,8 @@ sync PR replaces the copy in each project.
 - Dependabot alerts on (Settings, Advanced Security): known vulnerabilities in dependencies.
 - Optional `make screenshots`: writes at most three PNG files to `screenshots/` (made-up data,
   never production). Used by `screenshots.yml`.
-- Optional backups (`backup.yml`, `backup-restore.yml`): secrets `BACKUP_DATABASE_URL` (a
+- Optional backups (`backup.yml`, `backup-restore.yml`), copied to a repo that stays private
+  (artifacts and logs of a public repo are downloadable by anyone): secrets `BACKUP_DATABASE_URL` (a
   read-only role on the production database) and `BACKUP_PASSPHRASE` (also kept in a password
   manager: without it the backups cannot be read), and the variable `BACKUP_PG_MAJOR` when the
   server is not PostgreSQL 16. `RESTORE_DATABASE_URL` is added only to recover.
