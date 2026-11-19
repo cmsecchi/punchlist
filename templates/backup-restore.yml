@@ -9,9 +9,9 @@
 # app at the new database.
 #
 # The project sets:
-#   secret   RESTORE_DATABASE_URL  the empty target database (add it only when restoring)
+#   secret   RESTORE_DATABASE_URL  the empty target database, its PUBLIC URL (add it only when
+#                                  restoring)
 #   secret   BACKUP_PASSPHRASE     the same passphrase backup.yml uses
-#   variable BACKUP_PG_MAJOR       as in backup.yml
 name: backup-restore
 
 on:
@@ -35,7 +35,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      PG_IMAGE: postgres:${{ vars.BACKUP_PG_MAJOR || '16' }}
+      # Only used to ask the server its version; a newer client can talk to any older server.
+      PROBE_IMAGE: postgres:18
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
     steps:
@@ -48,6 +49,25 @@ jobs:
           [ -n "$TARGET_URL" ] || missing="$missing RESTORE_DATABASE_URL"
           [ -n "$PASSPHRASE" ] || missing="$missing BACKUP_PASSPHRASE"
           if [ -n "$missing" ]; then echo "Missing secrets:$missing" && exit 1; fi
+          # The host is what follows the last "@", up to ":" or "/".
+          host=${TARGET_URL##*@}; host=${host%%[:/?]*}
+          if [[ "$host" == *.internal || "$host" == localhost || "$host" == 127.* || "$host" != *.* ]]; then
+            echo "RESTORE_DATABASE_URL points to a private address that GitHub cannot reach."
+            echo "Use the database's public URL (on Railway: DATABASE_PUBLIC_URL; turn on Public access)."
+            exit 1
+          fi
+
+      # The restore must use the target server's own major version.
+      - name: Detect the server version
+        env:
+          TARGET_URL: ${{ secrets.RESTORE_DATABASE_URL }}
+        run: |
+          num=$(docker run --rm -e TARGET_URL "$PROBE_IMAGE" \
+                  sh -c 'psql -tA "$TARGET_URL" -c "show server_version_num"')
+          [[ "$num" =~ ^[0-9]+$ ]] || { echo "Could not read the server version." && exit 1; }
+          major=$((num / 10000))
+          echo "PG_IMAGE=postgres:$major" >> "$GITHUB_ENV"
+          echo "Target is PostgreSQL $major."
 
       - name: Pick the backup run
         env:
