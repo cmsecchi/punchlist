@@ -31,6 +31,8 @@ jobs:
       contents: read
     outputs:
       ran: ${{ steps.target.outputs.ran }}
+      # False when no screen changed: there is nothing to post, so `publish` is skipped.
+      shots: ${{ steps.collect.outputs.shots }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,6 +60,7 @@ jobs:
 
       # Keep at most three images with plain names, so nothing odd reaches the comment.
       - name: Collect images
+        id: collect
         if: steps.target.outputs.ran == 'true'
         run: |
           mkdir -p shots
@@ -66,8 +69,13 @@ jobs:
             if [[ "$name" =~ ^[a-z0-9-]+\.png$ ]]; then cp "$f" "shots/$name"; fi
           done
           ls shots
+          if [ -n "$(ls -A shots)" ]; then
+            echo "shots=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "shots=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - if: steps.target.outputs.ran == 'true'
+      - if: steps.collect.outputs.shots == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: screenshots
@@ -79,7 +87,7 @@ jobs:
     # Only for PRs from this repository: a fork's token cannot write, so its images stay as the
     # downloadable artifact above.
     if: >-
-      needs.capture.outputs.ran == 'true' &&
+      needs.capture.outputs.shots == 'true' &&
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 5
