@@ -2,21 +2,24 @@
 # punchlist/templates/backup.yml; change it there.
 #
 # What it does, once a day and on demand:
-#   1. Dumps the production PostgreSQL database (pg_dump, custom format).
-#   2. Encrypts the dump with a passphrase (gpg, AES-256).
-#   3. Proves the encrypted file is usable: decrypts it and restores it into a throwaway
+#   1. Asks the production PostgreSQL server its version, so every tool below matches it.
+#   2. Dumps the database (pg_dump, custom format).
+#   3. Encrypts the dump with a passphrase (gpg, AES-256).
+#   4. Proves the encrypted file is usable: decrypts it and restores it into a throwaway
 #      database that lives only inside this job.
-#   4. Keeps the encrypted file as a workflow artifact for 90 days.
+#   5. Keeps the encrypted file as a workflow artifact (90 days by default).
 # A failed run means there is no fresh backup; GitHub emails a failed scheduled run.
 #
 # Run it from a repository that stays private, never from one that is or may become public:
 # anyone can download the artifacts and read the logs of a public repository.
 #
 # The project sets:
-#   secret   BACKUP_DATABASE_URL   postgresql://user:password@host:port/db, ideally a read-only role
-#   secret   BACKUP_PASSPHRASE     long random passphrase, also kept in a password manager
-#   variable BACKUP_PG_MAJOR       the server's PostgreSQL major version (default 16); the client
-#                                  must match it
+#   secret   BACKUP_DATABASE_URL    postgresql://user:password@host:port/db?sslmode=require, with
+#                                   the database's PUBLIC host (GitHub runs outside your host's
+#                                   network) and ideally a read-only role
+#   secret   BACKUP_PASSPHRASE      long random passphrase, also kept in a password manager
+#   variable BACKUP_RETENTION_DAYS  optional, default 90. Space used is about retention times the
+#                                   encrypted size; a free account has 500 MB for artifacts
 #
 # Safety, by design:
 # - Only scheduled or manual runs from the default branch: a pull request never gets these secrets.
@@ -42,22 +45,8 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      PG_IMAGE: postgres:${{ vars.BACKUP_PG_MAJOR || '16' }}
-    services:
-      # The throwaway database used to prove the backup restores. Gone when the job ends.
-      scratch:
-        image: postgres:${{ vars.BACKUP_PG_MAJOR || '16' }}
-        env:
-          POSTGRES_USER: scratch
-          POSTGRES_PASSWORD: scratch
-          POSTGRES_DB: scratch
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U scratch"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+      # Only used to ask the server its version; a newer client can talk to any older server.
+      PROBE_IMAGE: postgres:18
     steps:
       - name: Check the configuration
         env:
@@ -68,9 +57,26 @@ jobs:
           [ -n "$DATABASE_URL" ] || missing="$missing BACKUP_DATABASE_URL"
           [ -n "$PASSPHRASE" ] || missing="$missing BACKUP_PASSPHRASE"
           if [ -n "$missing" ]; then echo "Missing secrets:$missing" && exit 1; fi
+          # The host is what follows the last "@", up to ":" or "/".
+          host=${DATABASE_URL##*@}; host=${host%%[:/?]*}
+          if [[ "$host" == *.internal || "$host" == localhost || "$host" == 127.* || "$host" != *.* ]]; then
+            echo "BACKUP_DATABASE_URL points to a private address that GitHub cannot reach."
+            echo "Use the database's public URL (on Railway: DATABASE_PUBLIC_URL; turn on Public access)."
+            exit 1
+          fi
 
-      # The client runs from the official image of the server's major version, so the dump
-      # format always matches the server.
+      # The dump and the restore check must use the server's own major version.
+      - name: Detect the server version
+        env:
+          DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+        run: |
+          num=$(docker run --rm -e DATABASE_URL "$PROBE_IMAGE" \
+                  sh -c 'psql -tA "$DATABASE_URL" -c "show server_version_num"')
+          [[ "$num" =~ ^[0-9]+$ ]] || { echo "Could not read the server version." && exit 1; }
+          major=$((num / 10000))
+          echo "PG_IMAGE=postgres:$major" >> "$GITHUB_ENV"
+          echo "Server is PostgreSQL $major."
+
       - name: Dump the database
         env:
           DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
@@ -91,24 +97,30 @@ jobs:
             --passphrase-fd 0 --symmetric --cipher-algo AES256 \
             --output "backup-$stamp.pgdump.gpg" dump.pgdump
           rm -f dump.pgdump
+          echo "Encrypted size: $(du -h "backup-$stamp.pgdump.gpg" | cut -f1)"
 
-      # Restore the encrypted file itself, the one that is kept, not the plain dump.
+      # Restore the encrypted file itself, the one that is kept, not the plain dump, into a
+      # throwaway server of the same version. It is gone when the job ends.
       - name: Prove the backup restores
         env:
           PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
           umask 077
+          docker run -d --name scratch -p 5432:5432 -e POSTGRES_PASSWORD=scratch "$PG_IMAGE" > /dev/null
+          for _ in $(seq 1 30); do
+            docker exec scratch pg_isready -U postgres -h localhost > /dev/null 2>&1 && break
+            sleep 2
+          done
           printf '%s' "$PASSPHRASE" | gpg --batch --quiet --pinentry-mode loopback \
             --passphrase-fd 0 --decrypt --output check.pgdump "backup-$STAMP.pgdump.gpg"
+          scratch_url="postgresql://postgres:scratch@localhost:5432/postgres"
           if ! docker run --rm --network host -v "$PWD:/work" "$PG_IMAGE" \
                pg_restore --no-owner --no-acl --exit-on-error \
-               --dbname="postgresql://scratch:scratch@localhost:5432/scratch" /work/check.pgdump \
-               2> restore.log; then
+               --dbname="$scratch_url" /work/check.pgdump 2> restore.log; then
             echo "Restore failed with $(grep -c 'error' restore.log) error line(s); details hidden."
             exit 1
           fi
-          tables=$(docker run --rm --network host "$PG_IMAGE" \
-            psql -tA "postgresql://scratch:scratch@localhost:5432/scratch" \
+          tables=$(docker run --rm --network host "$PG_IMAGE" psql -tA "$scratch_url" \
             -c "select count(*) from pg_tables where schemaname = 'public'")
           echo "Restored $tables table(s)."
           rm -f check.pgdump restore.log
@@ -118,5 +130,5 @@ jobs:
         with:
           name: backup-${{ env.STAMP }}
           path: backup-${{ env.STAMP }}.pgdump.gpg
-          retention-days: 90
+          retention-days: ${{ vars.BACKUP_RETENTION_DAYS || 90 }}
           if-no-files-found: error
