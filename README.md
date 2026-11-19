@@ -37,6 +37,8 @@ Then set up each project repo as described in "What a project needs".
 | `templates/review.yml` | The reviewer, read-only, called by `build.yml` | Copied to `.github/workflows/` |
 | `templates/secrets.yml` | Secret scan (gitleaks) on every PR and push to `main` | Copied to `.github/workflows/` |
 | `templates/screenshots.yml` | On PRs that change `frontend/`, runs `make screenshots` and posts up to three images in one PR comment; the PR's code never gets a write token or secrets | Copied to `.github/workflows/` (optional) |
+| `templates/backup.yml` | Daily encrypted `pg_dump` of the production PostgreSQL, proved by restoring it into a throwaway database, kept 30 days as a workflow artifact | Copied to `.github/workflows/` (optional) |
+| `templates/backup-restore.yml` | Manual recovery: decrypts a backup and restores it into an empty database; refuses one that has tables | Copied with `backup.yml` |
 
 Copied files are never edited in the project: a change is made here, the version is bumped, and a
 sync PR replaces the copy in each project.
@@ -56,6 +58,10 @@ sync PR replaces the copy in each project.
 - Dependabot alerts on (Settings, Advanced Security): known vulnerabilities in dependencies.
 - Optional `make screenshots`: writes at most three PNG files to `screenshots/` (made-up data,
   never production). Used by `screenshots.yml`.
+- Optional backups (`backup.yml`, `backup-restore.yml`): secrets `BACKUP_DATABASE_URL` (a
+  read-only role on the production database) and `BACKUP_PASSPHRASE` (also kept in a password
+  manager: without it the backups cannot be read), and the variable `BACKUP_PG_MAJOR` when the
+  server is not PostgreSQL 16. `RESTORE_DATABASE_URL` is added only to recover.
 - Optional `docs/security.md`: extra security rules for this app (e.g. a database with personal
   data). The reviewer checks them on top of its baseline.
 
@@ -78,6 +84,7 @@ Checked in the first rehearsal; if one fails, the fix lands here.
 - Claude Code in Actions reads `AGENTS.md` through the `@AGENTS.md` import in `CLAUDE.md`.
 - Pinning: Actions installs the marketplace's current version, not a pinned one.
 - The writer's PR, opened with the Claude app's token, starts `ci.yml`.
+- GitHub emails the owner when a scheduled `backup.yml` run fails.
 - The reviewer's verdict comes back through `structured_output`.
 
 ## Licence

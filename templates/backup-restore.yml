@@ -1,0 +1,100 @@
+# Restore a backup made by backup.yml into an EMPTY database. Copied verbatim from
+# punchlist/templates/backup-restore.yml; change it there.
+#
+# Run by hand only (Actions tab, "Run workflow"), for a real recovery. backup.yml already proves
+# every day that its backup restores, so this is not needed for testing.
+#
+# It refuses a database that already has tables: it can create a database, never overwrite one.
+# To recover, create a new empty database, put its URL in the secret, run this, then point the
+# app at the new database.
+#
+# The project sets:
+#   secret   RESTORE_DATABASE_URL  the empty target database (add it only when restoring)
+#   secret   BACKUP_PASSPHRASE     the same passphrase backup.yml uses
+#   variable BACKUP_PG_MAJOR       as in backup.yml
+name: backup-restore
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Run id of the backup to restore (from its URL). Empty: the latest good one."
+        required: false
+        default: ""
+
+concurrency:
+  group: backup-restore
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PG_IMAGE: postgres:${{ vars.BACKUP_PG_MAJOR || '16' }}
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Check the configuration
+        env:
+          TARGET_URL: ${{ secrets.RESTORE_DATABASE_URL }}
+          PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          missing=""
+          [ -n "$TARGET_URL" ] || missing="$missing RESTORE_DATABASE_URL"
+          [ -n "$PASSPHRASE" ] || missing="$missing BACKUP_PASSPHRASE"
+          if [ -n "$missing" ]; then echo "Missing secrets:$missing" && exit 1; fi
+
+      - name: Pick the backup run
+        env:
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID=$(gh api "repos/$REPO/actions/workflows/backup.yml/runs?status=success&per_page=1" \
+                       -q '.workflow_runs[0].id')
+          fi
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "No backup run found." && exit 1; }
+          echo "RUN_ID=$RUN_ID" >> "$GITHUB_ENV"
+          echo "Restoring the backup from run $RUN_ID."
+
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ env.RUN_ID }}
+          github-token: ${{ github.token }}
+          pattern: backup-*
+          merge-multiple: true
+          path: backup
+
+      # Stop before writing anything if the target already holds tables.
+      - name: Check the target database is empty
+        env:
+          TARGET_URL: ${{ secrets.RESTORE_DATABASE_URL }}
+        run: |
+          tables=$(docker run --rm -e TARGET_URL "$PG_IMAGE" sh -c \
+            'psql -tA "$TARGET_URL" -c "select count(*) from pg_tables where schemaname = '"'"'public'"'"'"')
+          if [ "$tables" != "0" ]; then
+            echo "The target database has $tables table(s). Refusing to overwrite it." && exit 1
+          fi
+
+      - name: Decrypt and restore
+        env:
+          TARGET_URL: ${{ secrets.RESTORE_DATABASE_URL }}
+          PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          umask 077
+          file=$(ls backup/*.pgdump.gpg | head -n 1)
+          echo "File: $(basename "$file")"
+          printf '%s' "$PASSPHRASE" | gpg --batch --quiet --pinentry-mode loopback \
+            --passphrase-fd 0 --decrypt --output restore.pgdump "$file"
+          if ! docker run --rm -e TARGET_URL -v "$PWD:/work" "$PG_IMAGE" sh -c \
+               'pg_restore --no-owner --no-acl --exit-on-error --dbname="$TARGET_URL" /work/restore.pgdump' \
+               2> restore.log; then
+            echo "Restore failed with $(grep -c 'error' restore.log) error line(s); details hidden."
+            exit 1
+          fi
+          rm -f restore.pgdump restore.log
+          echo "Restore finished."
