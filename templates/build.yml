@@ -68,6 +68,19 @@ jobs:
           n=$(gh pr list --repo "$GITHUB_REPOSITORY" --state open --json number,headRefName \
             --jq '[.[] | select(.headRefName | startswith("${{ github.event.issue.number }}-"))][0].number // empty')
           echo "number=$n" >> "$GITHUB_OUTPUT"
+      # No PR: the writer's last message often holds the reason or a question for the owner
+      # (a guard it would not dodge, a missing decision). Post it on the ticket so it is seen.
+      - if: always() && steps.pr.outputs.number == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUT: ${{ runner.temp }}/claude-execution-output.json
+        run: |
+          [ -f "$OUT" ] || exit 0
+          jq -r '[.[] | select(.type == "result")][-1].result // empty' "$OUT" > note.md
+          [ -s note.md ] || exit 0
+          { echo "The writer stopped without a pull request. Its last message:"; echo; cat note.md; } > body.md
+          gh api "repos/$GITHUB_REPOSITORY/issues/${{ github.event.issue.number }}/comments" \
+            -F body=@body.md > /dev/null
 
   review1:
     needs: write
