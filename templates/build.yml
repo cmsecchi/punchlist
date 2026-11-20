@@ -51,6 +51,15 @@ jobs:
             --model ${{ env.DEV_MODEL }}
             --max-turns 80
             --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
+      # The writer's transcript, kept 7 days, so a run that opens no PR can be diagnosed
+      # (which command was denied, where it stopped). The action writes it to the runner's temp dir.
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: writer-transcript
+          path: ${{ runner.temp }}/claude-execution-output.json
+          retention-days: 7
+          if-no-files-found: ignore
       - id: pr
         if: always()
         env:
