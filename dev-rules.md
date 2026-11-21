@@ -7,6 +7,8 @@ from `punchlist/dev-rules.md`; change them there, never here.
 ### The four commands
 
 `make setup`, `make test`, `make lint`, `make dev`. Call these, never the tool behind them.
+Run every command in the foreground and wait for its result. Never start one in the background
+or wait on a monitor: the run ends when your turn ends, and the background job dies with it.
 
 ### The loop, one Done-when line at a time
 
