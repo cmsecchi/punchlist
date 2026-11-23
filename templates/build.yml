@@ -14,6 +14,10 @@ concurrency:
 
 env:
   DEV_MODEL: claude-sonnet-5-5
+  # No background commands: a test started in the background dies when the turn ends, and the run
+  # exits with no PR. The foreground rule in dev-rules.md was not enough. Monitor is disallowed below
+  # for the same reason (this variable does not cover it).
+  CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1"
 
 permissions: {}
 
@@ -51,6 +55,7 @@ jobs:
             --model ${{ env.DEV_MODEL }}
             --max-turns 80
             --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
+            --disallowedTools "Monitor"
       # The writer's transcript, kept 7 days, so a run that opens no PR can be diagnosed
       # (which command was denied, where it stopped). The action writes it to the runner's temp dir.
       - if: always()
@@ -128,6 +133,7 @@ jobs:
             --model ${{ env.DEV_MODEL }}
             --max-turns 50
             --allowedTools "Bash,Read,Edit,Write,Glob,Grep"
+            --disallowedTools "Monitor"
 
   review2:
     needs: [write, fix1]
