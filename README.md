@@ -55,7 +55,8 @@ paid by the Claude plan, so they use no GitHub Actions minutes; only CI runs on 
   `guard.py` keeps the reviewer read-only and stops the writer from posting reviews;
   `post_review.py` posts the reviewer's own final message on the PR, tied to the commit it
   reviewed; `require_review.py` blocks the session from ending until the latest commit is
-  approved, or the ticket has `needs-you` after three reviews.
+  approved, or the PR has `needs-you` after three reviews. The whole review history stays on
+  the PR.
 - Writer and reviewer share one machine, so the hooks deter rather than guarantee. CI and the
   person who merges stay the gates.
 

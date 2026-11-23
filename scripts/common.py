@@ -99,7 +99,7 @@ def has_label(issue_number, label):
 
 
 def to_owner(issue_number, comment):
-    """Hand a ticket to the owner: `needs-you` label, assignment and one comment."""
+    """Hand a PR (or ticket) to the owner: `needs-you` label, assignment and one comment."""
     r = repo()
     owner = r.split("/")[0]
     gh(f"repos/{r}/issues/{issue_number}/labels", "-f", "labels[]=needs-you")
