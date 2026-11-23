@@ -43,6 +43,24 @@ Then set up each project repo as described in "What a project needs".
 Copied files are never edited in the project: a change is made here, the version is bumped, and a
 sync PR replaces the copy in each project.
 
+## Cloud mode (pilot)
+
+An alternative to `build.yml` for private repos: the agents run in a Claude Code cloud session,
+paid by the Claude plan, so they use no GitHub Actions minutes; only CI runs on GitHub.
+
+- A claude.ai scheduled task, triggered by a label on an issue, opens one session per ticket.
+- The writer works as in the Actions mode, then starts `agents/reviewer.md` as a subagent with
+  only the PR number. The reviewer reads the ticket and the diff itself, read-only.
+- Hooks in `hooks/hooks.json` (active only when the cloud environment sets `PUNCHLIST_CLOUD=1`):
+  `guard.py` keeps the reviewer read-only and stops the writer from posting reviews;
+  `post_review.py` posts the reviewer's own final message on the PR, tied to the commit it
+  reviewed; `require_review.py` blocks the session from ending until the latest commit is
+  approved, or the ticket has `needs-you` after three reviews.
+- Writer and reviewer share one machine, so the hooks deter rather than guarantee. CI and the
+  person who merges stay the gates.
+
+Being piloted; setup steps will follow once it is proven.
+
 ## What a project needs
 
 - An `AGENTS.md` with the project's own part (stack, commands, conventions) and the block from
