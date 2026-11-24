@@ -1,9 +1,15 @@
 {
-  "description": "Cloud mode only (PUNCHLIST_CLOUD=1): keeps the reviewer read-only, stops the writer from posting reviews, posts the reviewer's verdict, and blocks the session from ending without a review of the PR's latest commit.",
+  "description": "Cloud mode only (PUNCHLIST_CLOUD=1): keeps the reviewer read-only, stops the writer from posting reviews, stops every agent from merging or approving a PR, posts the reviewer's verdict, and blocks the session from ending without a review of the PR's latest commit.",
   "hooks": {
     "PreToolUse": [
       {
         "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/guard.py\"", "timeout": 10 }
+        ]
+      },
+      {
+        "matcher": "^mcp__.+__(merge_pull_request|enable_pr_auto_merge|pull_request_review_write)$",
         "hooks": [
           { "type": "command", "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/guard.py\"", "timeout": 10 }
         ]

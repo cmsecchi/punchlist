@@ -52,7 +52,8 @@ paid by the Claude plan, so they use no GitHub Actions minutes; only CI runs on 
 - The writer works as in the Actions mode, then starts `agents/reviewer.md` as a subagent with
   only the PR number. The reviewer reads the ticket and the diff itself, read-only.
 - Hooks in `hooks/hooks.json` (active only when the cloud environment sets `PUNCHLIST_CLOUD=1`):
-  `guard.py` keeps the reviewer read-only and stops the writer from posting reviews;
+  `guard.py` keeps the reviewer read-only, stops the writer from posting reviews, and stops
+  every agent from merging or approving a PR through a GitHub tool;
   `post_review.py` posts the reviewer's own final message on the PR, tied to the commit it
   reviewed; `require_review.py` blocks the session from ending until the latest commit is
   approved, or the PR has `needs-you` after three reviews. The whole review history stays on
