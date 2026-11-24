@@ -1,11 +1,14 @@
-"""PreToolUse hook on Bash, cloud mode only.
+"""PreToolUse hook on Bash and on GitHub tools, cloud mode only.
 
-Two jobs:
+Three jobs:
 - The reviewer subagent may only run read-only commands: `git diff`, `git log`, `git show` and
   GET requests with `gh api`, one command per call, with no pipes or redirections.
 - The writer may not post or forge a review: no PR comments or reviews, no marking the PR ready,
   no merge, no direct calls to the GitHub API with curl or wget, no text that mimics the review
   marker. It may still comment on its own ticket (the `needs-you` path in the dev rules).
+- No agent may merge, approve or auto-merge a PR through a GitHub tool (for example the GitHub
+  MCP server's `merge_pull_request`), which bypasses the Bash checks above. The session acts on
+  GitHub as the owner, so GitHub itself cannot tell the agent from the person.
 
 This is a deterrent, not a wall: writer and reviewer share one machine. The real gates stay
 outside the session: CI on GitHub and the person who merges.
@@ -21,6 +24,8 @@ from common import REVIEWER, active, read_input, ticket_number
 READ_ONLY_GIT = {"diff", "log", "show"}
 WRITE_FLAGS = {"-X", "--method", "-f", "-F", "--field", "--raw-field", "--input"}
 SHELL_META = re.compile(r"[;&|`<>\n]|\$\(")
+# GitHub tools that merge, approve or auto-merge a PR. Keep in step with hooks/hooks.json.
+BLOCKED_TOOLS = re.compile(r"^mcp__.+__(merge_pull_request|enable_pr_auto_merge|pull_request_review_write)$")
 
 
 def deny(reason):
@@ -70,6 +75,8 @@ def main():
     if not active():
         return
     data = read_input()
+    if BLOCKED_TOOLS.match(data.get("tool_name") or ""):
+        deny("Agents never merge, approve or auto-merge a PR; the owner does.")
     command = (data.get("tool_input") or {}).get("command") or ""
     if data.get("agent_type") == REVIEWER:
         check_reviewer(command)
