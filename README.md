@@ -68,6 +68,9 @@ Being piloted; setup steps will follow once it is proven.
   `dev-rules.md`, and a `CLAUDE.md` whose only line is `@AGENTS.md`. `AGENTS.md` is the shared
   convention many coding agents read; Claude Code reads it through the import.
 - A `Makefile` with `setup`, `test`, `lint` and `dev`. The rules and workflows only call these.
+- `make test` works on a fresh machine: it starts the services it needs (for example the Docker
+  daemon, which cloud sessions ship stopped), or stops at once with a clear message. It never
+  installs software.
 - Its own `.github/workflows/ci.yml` (tests and lint on every PR; it depends on the stack).
 - The labels `go`, `ready`, `prio` and `needs-you`.
 - The secret `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`).
