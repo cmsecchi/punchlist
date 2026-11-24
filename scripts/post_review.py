@@ -21,9 +21,14 @@ def main():
     if not pr:
         return
     found = re.findall(r"^Verdict:\s*(approved|changes)\s*$", message, re.M)
-    verdict = found[-1] if found else "none"
+    # The reviewer stops twice: once when it hands its report back (the message holds the review)
+    # and once when it closes (empty). Only a message with a verdict is a review; anything else is
+    # ignored, and the Stop hook asks for a review again if none was posted.
+    if not found:
+        return
+    verdict = found[-1]
     sha = pr["head"]["sha"]
-    body = MARKER.format(sha=sha, verdict=verdict) + "\n\n" + (message or "(The reviewer returned no text.)")
+    body = MARKER.format(sha=sha, verdict=verdict) + "\n\n" + message
     r, number = repo(), pr["number"]
     gh(f"repos/{r}/issues/{number}/comments", "-f", f"body={body}")
 

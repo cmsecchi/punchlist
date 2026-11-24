@@ -88,7 +88,8 @@ def reviews(pr_number):
     found = []
     for comment in comments:
         match = MARKER_RE.match(comment.get("body") or "")
-        if match:
+        # `none` came from an empty stop of the reviewer (before v0.5.1); it is not a review.
+        if match and match.group(2) != "none":
             found.append((match.group(1), match.group(2)))
     return found
 
@@ -99,7 +100,12 @@ def has_label(issue_number, label):
 
 
 def to_owner(issue_number, comment):
-    """Hand a PR (or ticket) to the owner: `needs-you` label, assignment and one comment."""
+    """Hand a PR (or ticket) to the owner: `needs-you` label, assignment and one comment.
+
+    Once per PR: a second call (a hook can fire twice in a row) does nothing.
+    """
+    if has_label(issue_number, "needs-you"):
+        return
     r = repo()
     owner = r.split("/")[0]
     gh(f"repos/{r}/issues/{issue_number}/labels", "-f", "labels[]=needs-you")

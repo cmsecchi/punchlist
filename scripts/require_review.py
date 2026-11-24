@@ -49,11 +49,12 @@ def main():
     latest = [v for s, v in reviews(number) if sha.startswith(s) or s.startswith(sha)]
     if latest and latest[-1] == "approved":
         return
-    if not latest or latest[-1] == "none":
+    if not latest:
         block(
             f"PR #{number} has no review of its latest commit. Start the reviewer with the Agent tool, "
             f"subagent_type `punchlist:reviewer`, and a prompt that is only: `Review PR #{number}.` "
-            "Do not summarise your work for it.",
+            "Do not summarise your work for it. The review counts only once the hook has posted "
+            "it on the PR with a verdict line.",
             number,
         )
     block(
