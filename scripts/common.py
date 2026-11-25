@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 # Hidden first line of every review comment the hook posts. The Stop hook looks for it, tied to
 # the commit that was reviewed, so a review of an older commit does not count.
@@ -41,6 +42,41 @@ def run(*args):
     """Run a command and return its stdout, or None if it failed."""
     result = subprocess.run(args, capture_output=True, text=True)
     return result.stdout if result.returncode == 0 else None
+
+
+def run_with_error(*args):
+    """Run a command; return (True, "") on success or (False, its error text) on failure.
+
+    Used where a silent failure would cost a whole session (posting the review).
+    """
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return False, str(error)
+    if result.returncode == 0:
+        return True, ""
+    return False, (result.stderr or result.stdout or f"exit {result.returncode}").strip()[:300]
+
+
+# Where the review hook leaves the result of its last run, so the Stop hook can say why no
+# review is on the PR instead of asking for another reviewer run blindly.
+STATUS_FILE = os.path.join(tempfile.gettempdir(), "punchlist-review-status")
+
+
+def write_status(text):
+    try:
+        with open(STATUS_FILE, "w") as f:
+            f.write(text)
+    except OSError:
+        pass
+
+
+def read_status():
+    try:
+        with open(STATUS_FILE) as f:
+            return f.read().strip()
+    except OSError:
+        return ""
 
 
 def gh(path, *extra):
