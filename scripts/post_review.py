@@ -6,6 +6,9 @@ a hidden marker naming the commit it reviewed and the verdict. The writer never 
 text. Then:
 - approved: the PR leaves draft and is assigned to the owner;
 - changes, for the third time on this PR: the PR gets `needs-you` and goes to the owner.
+
+Every run leaves its result (posted, or why not) in a status file that the Stop hook reports,
+so a review that does not land is explained instead of retried blindly.
 """
 
 import json
@@ -13,9 +16,14 @@ import os
 import re
 import tempfile
 
-from common import MARKER, MAX_REVIEWS, active, gh, open_pr, read_input, repo, reviews, run, to_owner
+from common import (
+    MARKER, MAX_REVIEWS, active, gh, open_pr, read_input, repo, reviews, run, run_with_error,
+    to_owner, write_status,
+)
 
-VERDICT_RE = re.compile(r"^Verdict:\s*(approved|changes)\s*$", re.M)
+# The last line of the report. Tolerant of Markdown emphasis, a heading mark and trailing
+# punctuation ("**Verdict: approved**", "Verdict: Approved."), which a strict match missed.
+VERDICT_RE = re.compile(r"^[\s>#*_-]*Verdict[*_]*\s*:\s*[*_]*\s*(approved|changes)\b", re.M | re.I)
 
 
 def strings_in(value):
@@ -68,14 +76,19 @@ def find_review(data):
     return ""
 
 
-def already_posted(agent_id):
-    """One post per reviewer run: the reviewer stops more than once."""
-    marker = os.path.join(tempfile.gettempdir(), f"punchlist-posted-{agent_id or 'unknown'}")
-    if os.path.exists(marker):
-        return True
-    with open(marker, "w") as f:
-        f.write("1")
-    return False
+def posted_marker(agent_id):
+    """One post per reviewer run (the reviewer stops more than once): a file per run."""
+    return os.path.join(tempfile.gettempdir(), f"punchlist-posted-{agent_id or 'unknown'}")
+
+
+def post_comment(r, number, body):
+    """Post the review, retrying once; returns "" on success or the error text."""
+    error = ""
+    for _ in range(2):
+        ok, error = run_with_error("gh", "api", f"repos/{r}/issues/{number}/comments", "-f", f"body={body}")
+        if ok:
+            return ""
+    return error or "unknown error"
 
 
 def main():
@@ -85,13 +98,27 @@ def main():
     message = find_review(data)
     pr = open_pr()
     # No verdict anywhere means no review: post nothing; the Stop hook asks for one again.
-    if not pr or not message or already_posted(data.get("agent_id")):
+    if not pr:
+        write_status("not posted: no open PR found for the current branch")
         return
-    verdict = VERDICT_RE.findall(message)[-1]
+    if not message:
+        write_status("not posted: the reviewer's report has no line `Verdict: approved` or `Verdict: changes`")
+        return
+    marker = posted_marker(data.get("agent_id"))
+    # An earlier stop of this same run already posted; only a successful post sets the marker.
+    if data.get("agent_id") and os.path.exists(marker):
+        return
+    verdict = VERDICT_RE.findall(message)[-1].lower()
     sha = pr["head"]["sha"]
     body = MARKER.format(sha=sha, verdict=verdict) + "\n\n" + message
     r, number = repo(), pr["number"]
-    gh(f"repos/{r}/issues/{number}/comments", "-f", f"body={body}")
+    error = post_comment(r, number, body)
+    if error:
+        write_status(f"not posted: GitHub refused the comment ({error})")
+        return
+    with open(marker, "w") as f:
+        f.write("1")
+    write_status(f"posted: verdict {verdict} on commit {sha[:7]}")
 
     if verdict == "approved":
         # `gh pr ready` uses GraphQL; if a proxy blocks it, the PR stays draft and the owner is

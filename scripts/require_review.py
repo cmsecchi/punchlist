@@ -14,9 +14,11 @@ import os
 import sys
 import tempfile
 
-from common import active, has_label, open_pr, read_input, reviews, to_owner
+from common import active, has_label, open_pr, read_input, read_status, reviews, to_owner
 
-MAX_BLOCKS = 8
+# Low on purpose: each block costs a full writer turn. If the review still has not landed after
+# three, more reviewer runs will not help; the owner gets the PR with the reason.
+MAX_BLOCKS = 3
 COUNTER = os.path.join(tempfile.gettempdir(), "punchlist-stop-blocks")
 
 
@@ -28,7 +30,12 @@ def block(reason, pr_number):
     except (OSError, ValueError):
         pass
     if count > MAX_BLOCKS:
-        to_owner(pr_number, "The writer's session could not finish the review loop; it stopped here.")
+        status = read_status() or "no result recorded"
+        to_owner(
+            pr_number,
+            f"The writer's session could not finish the review loop; it stopped here. "
+            f"Last review hook result: {status}.",
+        )
         return
     with open(COUNTER, "w") as f:
         f.write(str(count))
@@ -50,6 +57,9 @@ def main():
     if latest and latest[-1] == "approved":
         return
     if not latest:
+        status = read_status()
+        if status:
+            print(f"Last review hook result: {status}.", file=sys.stderr)
         block(
             f"PR #{number} has no review of its latest commit. Start the reviewer with the Agent tool, "
             f"subagent_type `punchlist:reviewer`, and a prompt that is only: `Review PR #{number}.` "
